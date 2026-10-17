@@ -21,6 +21,14 @@
     .bar { height: 100%; width: 0; background: #16a34a; transition: width .2s; }
     button { margin-top: 24px; width: 100%; padding: 13px; border: 1px solid #cbd5e1; border-radius: 10px; background: white; color: #334155; font-size: 16px; cursor: pointer; }
     button:hover { background: #f8fafc; }
+    /* 【追加 v1.2】日別履歴の表示 */
+    .history { margin-top: 28px; border-top: 1px solid #e2e8f0; padding-top: 22px; }
+    .history h2 { font-size: 20px; margin: 0 0 12px; }
+    .history-day { padding: 14px; border: 1px solid #dce3ec; border-radius: 12px; margin: 12px 0; }
+    .history-day h3 { font-size: 15px; margin: 0 0 10px; }
+    .history-day p { font-size: 14px; margin: 7px 0; }
+    .history-empty { font-size: 14px; color: #64748b; }
+    .history button { margin-top: 12px; }
     .note { font-size: 12px; color: #64748b; text-align: center; margin-top: 16px; }
   </style>
 </head>
@@ -48,7 +56,13 @@
     </div>
     <p class="status" id="status" aria-live="polite">0 / 3 項目を確認済み</p>
     <button type="button" id="reset">チェックをリセット</button>
-    <p class="note">チェック状態と確認日時はこのブラウザに保存されます。</p>
+    <!-- 【追加 v1.2】日別履歴エリア -->
+    <section class="history" aria-labelledby="history-title">
+      <h2 id="history-title">📅 日別履歴</h2>
+      <div id="history-list"><p class="history-empty">まだ履歴はありません。</p></div>
+      <button type="button" id="clear-history">履歴をすべて削除</button>
+    </section>
+    <p class="note">チェック状態・確認日時・日別履歴はこのブラウザに保存されます。</p>
   </main>
 
   <script>
@@ -59,6 +73,11 @@
     // 【追加】確認日時専用の保存キーとデータ
     const timeKey = 'daily-check-times-v1';
     let checkedTimes = {};
+
+    // 【追加 v1.2】日別履歴の保存先（既存の保存データは変更しない）
+    const historyKey = 'daily-check-history-v1';
+    let history = {};
+    const labels = { door: '🔒 ドアの施錠', light: '💡 部屋の消灯', wallet: '👛 財布の有無' };
 
     // 【変更】既存のチェック状態を読み込む
     try {
@@ -76,6 +95,74 @@
       }
     } catch (e) {
       console.warn('確認日時を読み込めませんでした', e);
+    }
+
+    // 【追加 v1.2】保存済みの日別履歴を読み込む
+    try {
+      const savedHistory = JSON.parse(localStorage.getItem(historyKey) || '{}');
+      if (savedHistory && typeof savedHistory === 'object' && !Array.isArray(savedHistory)) {
+        history = savedHistory;
+      }
+    } catch (e) {
+      console.warn('日別履歴を読み込めませんでした', e);
+    }
+
+    // 【追加 v1.2】iPhoneのローカル日付を履歴のキーにする
+    function localDateKey(isoString) {
+      const date = new Date(isoString);
+      if (Number.isNaN(date.getTime())) return null;
+      const pad = n => String(n).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+
+    // 【追加 v1.2】確認操作を日付ごとに記録。同じ日の同じ項目は最新時刻に更新
+    function recordHistory(id, isoString) {
+      const day = localDateKey(isoString);
+      if (!day) return;
+      if (!history[day] || typeof history[day] !== 'object') history[day] = {};
+      history[day][id] = isoString;
+    }
+
+    // 【追加 v1.2】日別履歴を表示（文字列はtextContentで安全に表示）
+    function renderHistory() {
+      const list = document.getElementById('history-list');
+      list.replaceChildren();
+      const days = Object.keys(history).filter(day => /^\d{4}-\d{2}-\d{2}$/.test(day))
+        .sort().reverse().filter(day => ids.some(id => history[day]?.[id]));
+      if (days.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'history-empty';
+        empty.textContent = 'まだ履歴はありません。';
+        list.appendChild(empty);
+        return;
+      }
+      days.forEach(day => {
+        const section = document.createElement('div');
+        section.className = 'history-day';
+        const title = document.createElement('h3');
+        title.textContent = day.replace(/-/g, '/');
+        section.appendChild(title);
+        ids.forEach(id => {
+          const iso = history[day][id];
+          if (!iso || Number.isNaN(new Date(iso).getTime())) return;
+          const p = document.createElement('p');
+          const time = new Date(iso);
+          const pad = n => String(n).padStart(2, '0');
+          p.textContent = `${labels[id]}　${pad(time.getHours())}:${pad(time.getMinutes())}`;
+          section.appendChild(p);
+        });
+        list.appendChild(section);
+      });
+    }
+
+    // 【追加 v1.2】v1.1の確認日時を初回だけ履歴に取り込む
+    // 過去にリセットして消えた日時は復元できません。
+    if (localStorage.getItem(historyKey) === null) {
+      ids.forEach(id => {
+        if (checkedTimes[id]) recordHistory(id, checkedTimes[id]);
+      });
+      try { localStorage.setItem(historyKey, JSON.stringify(history)); }
+      catch (e) { console.warn('履歴の初期保存に失敗しました', e); }
     }
 
     // 【追加】日時を「YYYY/MM/DD HH:mm」で表示する
@@ -103,9 +190,13 @@
         localStorage.setItem(key, JSON.stringify(Object.fromEntries(boxes.map(box => [box.id, box.checked]))));
         // 【追加】確認日時も保存
         localStorage.setItem(timeKey, JSON.stringify(checkedTimes));
+        // 【追加 v1.2】日別履歴も保存する
+        localStorage.setItem(historyKey, JSON.stringify(history));
       } catch (e) {
         console.warn('データを保存できませんでした', e);
       }
+      // 【追加 v1.2】画面更新時に履歴も再描画
+      renderHistory();
     }
 
     // 【変更】チェック操作時に日時を記録・削除する
@@ -115,6 +206,8 @@
       } else {
         delete checkedTimes[box.id];
       }
+      // 【追加 v1.2】チェックした時点で履歴に記録する
+      if (box.checked) recordHistory(box.id, checkedTimes[box.id]);
       update();
     }));
 
@@ -122,6 +215,13 @@
     document.getElementById('reset').addEventListener('click', () => {
       boxes.forEach(box => { box.checked = false; });
       checkedTimes = {};
+      update();
+    });
+
+    // 【追加 v1.2】履歴の削除は確認後に実行
+    document.getElementById('clear-history').addEventListener('click', () => {
+      if (!window.confirm('日別履歴をすべて削除しますか？ この操作は元に戻せません。')) return;
+      history = {};
       update();
     });
 
