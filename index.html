@@ -40,14 +40,6 @@
     .manage-list li span { overflow-wrap: anywhere; min-width: 0; }
     .manage-list button { width: auto; margin: 0; padding: 7px 12px; color: #b91c1c; font-size: 14px; flex-shrink: 0; }
     .manage-help { font-size: 12px; color: #64748b; margin: 8px 0; }
-    /* 【追加 v1.4】過去3日間の履歴表示（既存の日別履歴の下） */
-    .recent-history { margin-top: 28px; border-top: 1px solid #e2e8f0; padding-top: 22px; }
-    .recent-history h2 { font-size: 20px; margin: 0 0 8px; }
-    .recent-help { font-size: 13px; color: #64748b; margin: 0 0 14px; }
-    .recent-day { padding: 14px; border: 1px solid #dce3ec; border-radius: 12px; margin: 12px 0; }
-    .recent-day h3 { font-size: 15px; margin: 0 0 10px; }
-    .recent-day p { font-size: 14px; margin: 7px 0; overflow-wrap: anywhere; }
-    .recent-empty { color: #64748b; }
     .note { font-size: 12px; color: #64748b; text-align: center; margin-top: 16px; }
   </style>
 </head>
@@ -93,12 +85,6 @@
       <h2 id="history-title">📅 日別履歴</h2>
       <div id="history-list"><p class="history-empty">まだ履歴はありません。</p></div>
       <button type="button" id="clear-history">履歴をすべて削除</button>
-    </section>
-    <!-- 【追加 v1.4】日別履歴の直下に、昨日から3日前までの履歴を表示 -->
-    <section class="recent-history" aria-labelledby="recent-history-title">
-      <h2 id="recent-history-title">📆 過去3日間の履歴</h2>
-      <p class="recent-help">昨日・一昨日・3日前の確認記録です（今日の分は含みません）。</p>
-      <div id="recent-history-list"></div>
     </section>
     <p class="note">チェック状態・確認日時・日別履歴・追加項目はこのブラウザに保存されます。</p>
   </main>
@@ -232,52 +218,6 @@
         list.appendChild(section);
       });
     }
-    // 【追加 v1.4】ローカル日付で過去3日分の表示対象を作る
-    // ISO文字列のUTC日付ではなく、端末の現地日付で判定する。
-    function pastThreeDays() {
-      const today = new Date();
-      const days = [];
-      for (let offset = 1; offset <= 3; offset++) {
-        // 正午を使うことで夏時間切替時の時刻ずれを避ける
-        const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset, 12);
-        const pad = n => String(n).padStart(2, '0');
-        const key = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-        days.push({ key, label: `${key.replace(/-/g, '/')}（${'日月火水木金土'[date.getDay()]}）` });
-      }
-      return days;
-    }
-    // 【追加 v1.4】既存historyを読み取り、過去3日だけ表示する（保存データは変更しない）
-    function renderRecentHistory() {
-      const container = document.getElementById('recent-history-list');
-      container.replaceChildren();
-      pastThreeDays().forEach(day => {
-        const section = document.createElement('div');
-        section.className = 'recent-day';
-        const heading = document.createElement('h3');
-        heading.textContent = day.label;
-        section.appendChild(heading);
-        const records = history[day.key];
-        let count = 0;
-        if (records && typeof records === 'object' && !Array.isArray(records)) {
-          Object.entries(records).forEach(([id, iso]) => {
-            const date = new Date(iso);
-            if (typeof iso !== 'string' || Number.isNaN(date.getTime()) || localDateKey(iso) !== day.key) return;
-            const pad = n => String(n).padStart(2, '0');
-            const line = document.createElement('p');
-            line.textContent = `✓ ${historyLabels[id] || labels[id] || id}　${pad(date.getHours())}:${pad(date.getMinutes())}`;
-            section.appendChild(line);
-            count++;
-          });
-        }
-        if (!count) {
-          const empty = document.createElement('p');
-          empty.className = 'recent-empty';
-          empty.textContent = '記録なし';
-          section.appendChild(empty);
-        }
-        container.appendChild(section);
-      });
-    }
     function boxes() { return allItems().map(item => document.getElementById(item.id)).filter(Boolean); }
     // 【変更 v1.3】進捗を固定の3項目ではなく、現在の項目数で計算
     function update() {
@@ -298,7 +238,6 @@
       save(customKey, customItems);
       save(historyLabelsKey, historyLabels);
       renderHistory();
-      renderRecentHistory(); // 【追加 v1.4】チェック操作・履歴削除時に再描画
       renderManageList();
     }
     function attachCheckHandler(box) {
@@ -348,20 +287,6 @@
     });
     renderCustomItems();
     update();
-    // 【追加 v1.4】アプリを開いたまま日付が変わった場合も再描画する
-    let recentRenderedOn = localDateKey(new Date().toISOString());
-    function refreshRecentOnDateChange() {
-      const today = localDateKey(new Date().toISOString());
-      if (today !== recentRenderedOn) {
-        recentRenderedOn = today;
-        renderRecentHistory();
-      }
-    }
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) refreshRecentOnDateChange();
-    });
-    window.addEventListener('focus', refreshRecentOnDateChange);
-    window.setInterval(refreshRecentOnDateChange, 60 * 1000);
   </script>
 </body>
 </html>
