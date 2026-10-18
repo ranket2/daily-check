@@ -29,6 +29,17 @@
     .history-day p { font-size: 14px; margin: 7px 0; }
     .history-empty { font-size: 14px; color: #64748b; }
     .history button { margin-top: 12px; }
+    /* 【追加 v1.3】チェック項目の管理画面 */
+    .manage { margin-top: 20px; padding: 16px 0 4px; border-top: 1px solid #e2e8f0; }
+    .manage h2 { font-size: 18px; margin: 0 0 12px; }
+    .add-form { display: flex; gap: 8px; align-items: stretch; }
+    .add-form input { flex: 1; min-width: 0; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 16px; }
+    .add-form button { margin: 0; width: auto; white-space: nowrap; padding: 10px 14px; }
+    .manage-list { list-style: none; margin: 12px 0 0; padding: 0; }
+    .manage-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid #eef2f7; font-size: 14px; }
+    .manage-list li span { overflow-wrap: anywhere; min-width: 0; }
+    .manage-list button { width: auto; margin: 0; padding: 7px 12px; color: #b91c1c; font-size: 14px; flex-shrink: 0; }
+    .manage-help { font-size: 12px; color: #64748b; margin: 8px 0; }
     .note { font-size: 12px; color: #64748b; text-align: center; margin-top: 16px; }
   </style>
 </head>
@@ -51,6 +62,19 @@
       <span class="item-content">👛 財布の有無 <span class="checked-at" id="wallet-time">未確認</span></span>
     </label>
 
+    <!-- 【追加 v1.3】新規項目もここに描画。初期3項目の下に追加 -->
+    <div id="custom-items"></div>
+    <!-- 【追加 v1.3】チェック項目の直下に追加・削除の管理機能 -->
+    <section class="manage" aria-labelledby="manage-title">
+      <h2 id="manage-title">項目の追加・削除</h2>
+      <form class="add-form" id="add-form">
+        <input id="new-item-name" type="text" maxlength="60" placeholder="新しいチェック項目" aria-label="新しいチェック項目" required>
+        <button type="submit">＋ 追加</button>
+      </form>
+      <p class="manage-help">追加した項目は下の一覧から削除できます。初期の3項目は削除できません。</p>
+      <ul class="manage-list" id="manage-list"></ul>
+    </section>
+
     <div class="progress" role="progressbar" aria-label="確認の進捗" aria-valuemin="0" aria-valuemax="3" aria-valuenow="0" id="progress">
       <div class="bar" id="bar"></div>
     </div>
@@ -62,169 +86,206 @@
       <div id="history-list"><p class="history-empty">まだ履歴はありません。</p></div>
       <button type="button" id="clear-history">履歴をすべて削除</button>
     </section>
-    <p class="note">チェック状態・確認日時・日別履歴はこのブラウザに保存されます。</p>
+    <p class="note">チェック状態・確認日時・日別履歴・追加項目はこのブラウザに保存されます。</p>
   </main>
 
   <script>
-    const ids = ['door', 'light', 'wallet'];
-    const key = 'daily-check-v1'; // 既存のチェック状態を引き継ぐ
-    const boxes = ids.map(id => document.getElementById(id));
-
-    // 【追加】確認日時専用の保存キーとデータ
+    // 【変更 v1.3】初期3項目と追加項目を別々に管理する
+    const defaultItems = [
+      { id: 'door', name: '🔒 ドアの施錠' },
+      { id: 'light', name: '💡 部屋の消灯' },
+      { id: 'wallet', name: '👛 財布の有無' }
+    ];
+    const key = 'daily-check-v1';                // v1.2までのデータを引き継ぐ
     const timeKey = 'daily-check-times-v1';
-    let checkedTimes = {};
-
-    // 【追加 v1.2】日別履歴の保存先（既存の保存データは変更しない）
     const historyKey = 'daily-check-history-v1';
-    let history = {};
-    const labels = { door: '🔒 ドアの施錠', light: '💡 部屋の消灯', wallet: '👛 財布の有無' };
+    // 【追加 v1.3】追加項目と履歴の項目名を保存するキー
+    const customKey = 'daily-check-custom-items-v1';
+    const historyLabelsKey = 'daily-check-history-labels-v1';
 
-    // 【変更】既存のチェック状態を読み込む
-    try {
-      const saved = JSON.parse(localStorage.getItem(key) || '{}');
-      boxes.forEach(box => { box.checked = !!saved[box.id]; });
-    } catch (e) {
-      console.warn('チェック状態を読み込めませんでした', e);
+    function readObject(storageKey) {
+      try {
+        const value = JSON.parse(localStorage.getItem(storageKey) || '{}');
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+      } catch (e) { console.warn('読み込み失敗:', storageKey, e); return {}; }
     }
-
-    // 【追加】保存済みの確認日時を読み込む
-    try {
-      const savedTimes = JSON.parse(localStorage.getItem(timeKey) || '{}');
-      if (savedTimes && typeof savedTimes === 'object' && !Array.isArray(savedTimes)) {
-        checkedTimes = savedTimes;
-      }
-    } catch (e) {
-      console.warn('確認日時を読み込めませんでした', e);
+    function save(storageKey, value) {
+      try { localStorage.setItem(storageKey, JSON.stringify(value)); }
+      catch (e) { console.warn('保存失敗:', storageKey, e); }
     }
-
-    // 【追加 v1.2】保存済みの日別履歴を読み込む
+    const savedChecks = readObject(key);
+    let checkedTimes = readObject(timeKey);
+    let history = readObject(historyKey);
+    let historyLabels = readObject(historyLabelsKey);
+    // 【追加 v1.3】不正な保存データを除外して読み込む
+    let customItems = [];
     try {
-      const savedHistory = JSON.parse(localStorage.getItem(historyKey) || '{}');
-      if (savedHistory && typeof savedHistory === 'object' && !Array.isArray(savedHistory)) {
-        history = savedHistory;
-      }
-    } catch (e) {
-      console.warn('日別履歴を読み込めませんでした', e);
-    }
+      const parsed = JSON.parse(localStorage.getItem(customKey) || '[]');
+      if (Array.isArray(parsed)) customItems = parsed.filter(item =>
+        item && typeof item.id === 'string' && /^custom-[a-z0-9-]+$/.test(item.id) &&
+        typeof item.name === 'string' && item.name.trim().length > 0
+      ).map(item => ({ id: item.id, name: item.name }));
+    } catch (e) { console.warn('追加項目を読み込めませんでした', e); }
 
-    // 【追加 v1.2】iPhoneのローカル日付を履歴のキーにする
+    const labels = Object.fromEntries(defaultItems.map(item => [item.id, item.name]));
+    customItems.forEach(item => { labels[item.id] = item.name; });
+    // 【追加 v1.3】削除した項目も履歴で名前を表示できるように保持
+    Object.assign(historyLabels, Object.fromEntries(defaultItems.map(item => [item.id, item.name])));
+    customItems.forEach(item => { historyLabels[item.id] = item.name; });
+
+    function allItems() { return [...defaultItems, ...customItems]; }
     function localDateKey(isoString) {
       const date = new Date(isoString);
       if (Number.isNaN(date.getTime())) return null;
       const pad = n => String(n).padStart(2, '0');
       return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
     }
-
-    // 【追加 v1.2】確認操作を日付ごとに記録。同じ日の同じ項目は最新時刻に更新
     function recordHistory(id, isoString) {
       const day = localDateKey(isoString);
       if (!day) return;
-      if (!history[day] || typeof history[day] !== 'object') history[day] = {};
+      if (!history[day] || typeof history[day] !== 'object' || Array.isArray(history[day])) history[day] = {};
       history[day][id] = isoString;
+      historyLabels[id] = labels[id] || historyLabels[id] || id;
     }
-
-    // 【追加 v1.2】日別履歴を表示（文字列はtextContentで安全に表示）
+    // 【変更 v1.3】以前の履歴の項目名を確保してから引き継ぐ
+    if (localStorage.getItem(historyKey) === null) {
+      allItems().forEach(item => { if (checkedTimes[item.id]) recordHistory(item.id, checkedTimes[item.id]); });
+      save(historyKey, history);
+    }
+    function formatDateTime(isoString) {
+      if (!isoString) return '未確認';
+      const date = new Date(isoString);
+      if (Number.isNaN(date.getTime())) return '未確認';
+      const pad = n => String(n).padStart(2, '0');
+      return `確認日時：${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+    // 【追加 v1.3】新規チェック項目のHTMLを安全に作成
+    function makeCustomItem(item) {
+      const label = document.createElement('label');
+      label.className = 'item';
+      const box = document.createElement('input');
+      box.type = 'checkbox'; box.id = item.id; box.checked = !!savedChecks[item.id];
+      const content = document.createElement('span');
+      content.className = 'item-content';
+      const name = document.createElement('span');
+      name.textContent = item.name; // HTMLを解釈させない
+      const time = document.createElement('span');
+      time.className = 'checked-at'; time.id = `${item.id}-time`;
+      content.append(name, time); label.append(box, content);
+      return label;
+    }
+    function renderCustomItems() {
+      const container = document.getElementById('custom-items');
+      container.replaceChildren(...customItems.map(makeCustomItem));
+      customItems.forEach(item => attachCheckHandler(document.getElementById(item.id)));
+    }
+    function renderManageList() {
+      const list = document.getElementById('manage-list');
+      list.replaceChildren();
+      customItems.forEach(item => {
+        const li = document.createElement('li');
+        const name = document.createElement('span'); name.textContent = item.name;
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = '削除';
+        button.setAttribute('aria-label', `${item.name}を削除`);
+        button.addEventListener('click', () => removeItem(item.id));
+        li.append(name, button); list.appendChild(li);
+      });
+    }
+    // 【変更 v1.3】削除済みの項目も過去履歴に残して表示する
     function renderHistory() {
       const list = document.getElementById('history-list');
       list.replaceChildren();
       const days = Object.keys(history).filter(day => /^\d{4}-\d{2}-\d{2}$/.test(day))
-        .sort().reverse().filter(day => ids.some(id => history[day]?.[id]));
-      if (days.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'history-empty';
-        empty.textContent = 'まだ履歴はありません。';
-        list.appendChild(empty);
-        return;
+        .sort().reverse().filter(day => history[day] && typeof history[day] === 'object' &&
+          Object.values(history[day]).some(iso => iso && !Number.isNaN(new Date(iso).getTime())));
+      if (!days.length) {
+        const empty = document.createElement('p'); empty.className = 'history-empty';
+        empty.textContent = 'まだ履歴はありません。'; list.appendChild(empty); return;
       }
       days.forEach(day => {
-        const section = document.createElement('div');
-        section.className = 'history-day';
-        const title = document.createElement('h3');
-        title.textContent = day.replace(/-/g, '/');
+        const section = document.createElement('div'); section.className = 'history-day';
+        const title = document.createElement('h3'); title.textContent = day.replace(/-/g, '/');
         section.appendChild(title);
-        ids.forEach(id => {
-          const iso = history[day][id];
-          if (!iso || Number.isNaN(new Date(iso).getTime())) return;
-          const p = document.createElement('p');
+        Object.entries(history[day]).forEach(([id, iso]) => {
           const time = new Date(iso);
+          if (!iso || Number.isNaN(time.getTime())) return;
+          const p = document.createElement('p');
           const pad = n => String(n).padStart(2, '0');
-          p.textContent = `${labels[id]}　${pad(time.getHours())}:${pad(time.getMinutes())}`;
+          p.textContent = `${historyLabels[id] || labels[id] || id}　${pad(time.getHours())}:${pad(time.getMinutes())}`;
           section.appendChild(p);
         });
         list.appendChild(section);
       });
     }
-
-    // 【追加 v1.2】v1.1の確認日時を初回だけ履歴に取り込む
-    // 過去にリセットして消えた日時は復元できません。
-    if (localStorage.getItem(historyKey) === null) {
-      ids.forEach(id => {
-        if (checkedTimes[id]) recordHistory(id, checkedTimes[id]);
-      });
-      try { localStorage.setItem(historyKey, JSON.stringify(history)); }
-      catch (e) { console.warn('履歴の初期保存に失敗しました', e); }
-    }
-
-    // 【追加】日時を「YYYY/MM/DD HH:mm」で表示する
-    function formatDateTime(isoString) {
-      if (!isoString) return '未確認';
-      const date = new Date(isoString);
-      if (Number.isNaN(date.getTime())) return '未確認';
-      const pad = number => String(number).padStart(2, '0');
-      return `確認日時：${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-    }
-
-    // 【変更】画面表示と保存処理に確認日時を追加
+    function boxes() { return allItems().map(item => document.getElementById(item.id)).filter(Boolean); }
+    // 【変更 v1.3】進捗を固定の3項目ではなく、現在の項目数で計算
     function update() {
-      const count = boxes.filter(box => box.checked).length;
-      document.getElementById('status').textContent = count === 3 ? '✅ すべて確認完了！' : `${count} / 3 項目を確認済み`;
-      document.getElementById('bar').style.width = `${count / 3 * 100}%`;
-      document.getElementById('progress').setAttribute('aria-valuenow', String(count));
-
-      // 【追加】各項目の日時を表示
-      boxes.forEach(box => {
+      const currentBoxes = boxes();
+      const count = currentBoxes.filter(box => box.checked).length;
+      const total = currentBoxes.length;
+      document.getElementById('status').textContent = count === total ? '✅ すべて確認完了！' : `${count} / ${total} 項目を確認済み`;
+      document.getElementById('bar').style.width = `${count / total * 100}%`;
+      const progress = document.getElementById('progress');
+      progress.setAttribute('aria-valuemax', String(total));
+      progress.setAttribute('aria-valuenow', String(count));
+      currentBoxes.forEach(box => {
         document.getElementById(`${box.id}-time`).textContent = box.checked ? formatDateTime(checkedTimes[box.id]) : '未確認';
       });
-
-      try {
-        localStorage.setItem(key, JSON.stringify(Object.fromEntries(boxes.map(box => [box.id, box.checked]))));
-        // 【追加】確認日時も保存
-        localStorage.setItem(timeKey, JSON.stringify(checkedTimes));
-        // 【追加 v1.2】日別履歴も保存する
-        localStorage.setItem(historyKey, JSON.stringify(history));
-      } catch (e) {
-        console.warn('データを保存できませんでした', e);
-      }
-      // 【追加 v1.2】画面更新時に履歴も再描画
+      save(key, Object.fromEntries(currentBoxes.map(box => [box.id, box.checked])));
+      save(timeKey, checkedTimes);
+      save(historyKey, history);
+      save(customKey, customItems);
+      save(historyLabelsKey, historyLabels);
       renderHistory();
+      renderManageList();
     }
-
-    // 【変更】チェック操作時に日時を記録・削除する
-    boxes.forEach(box => box.addEventListener('change', () => {
-      if (box.checked) {
-        checkedTimes[box.id] = new Date().toISOString();
-      } else {
-        delete checkedTimes[box.id];
+    function attachCheckHandler(box) {
+      box.addEventListener('change', () => {
+        if (box.checked) {
+          checkedTimes[box.id] = new Date().toISOString();
+          recordHistory(box.id, checkedTimes[box.id]);
+        } else delete checkedTimes[box.id];
+        update();
+      });
+    }
+    // 【追加 v1.3】項目の追加処理
+    document.getElementById('add-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const input = document.getElementById('new-item-name');
+      const name = input.value.trim();
+      if (!name) return;
+      if (allItems().some(item => item.name === name)) {
+        window.alert('同じ名前の項目がすでにあります。'); return;
       }
-      // 【追加 v1.2】チェックした時点で履歴に記録する
-      if (box.checked) recordHistory(box.id, checkedTimes[box.id]);
-      update();
-    }));
-
-    // 【変更】リセット時に日時も消去する
-    document.getElementById('reset').addEventListener('click', () => {
-      boxes.forEach(box => { box.checked = false; });
-      checkedTimes = {};
-      update();
+      const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+      const item = { id, name };
+      customItems.push(item); labels[id] = name; historyLabels[id] = name;
+      renderCustomItems(); input.value = ''; update();
     });
-
-    // 【追加 v1.2】履歴の削除は確認後に実行
+    // 【追加 v1.3】初期3項目は削除不可。削除しても過去の履歴は保持
+    function removeItem(id) {
+      const item = customItems.find(entry => entry.id === id);
+      if (!item || !window.confirm(`「${item.name}」をチェック項目から削除しますか？\n過去の日別履歴は残ります。`)) return;
+      customItems = customItems.filter(entry => entry.id !== id);
+      delete checkedTimes[id];
+      delete labels[id];
+      renderCustomItems(); update();
+    }
+    document.getElementById('reset').addEventListener('click', () => {
+      boxes().forEach(box => { box.checked = false; });
+      checkedTimes = {}; update();
+    });
     document.getElementById('clear-history').addEventListener('click', () => {
       if (!window.confirm('日別履歴をすべて削除しますか？ この操作は元に戻せません。')) return;
-      history = {};
-      update();
+      history = {}; update();
     });
-
+    // 【変更 v1.3】初期項目と追加項目を読み込み、イベントを登録
+    defaultItems.forEach(item => {
+      const box = document.getElementById(item.id);
+      box.checked = !!savedChecks[item.id]; attachCheckHandler(box);
+    });
+    renderCustomItems();
     update();
   </script>
 </body>
